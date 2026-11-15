@@ -1,0 +1,22 @@
+# Data stays out of git (too large). Raw files live on shared Google Drive.
+data/raw/**
+data/processed/**
+!data/raw/florida/
+!data/raw/global/
+!data/raw/florida/.gitkeep
+!data/raw/global/.gitkeep
+!data/processed/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.key
+
+# OS
+.DS_Store

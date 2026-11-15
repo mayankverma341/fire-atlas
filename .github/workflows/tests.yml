@@ -1,0 +1,49 @@
+name: tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read          # tests only read the code. No secrets are used here.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: colab (exact versions)
+            python: "3.13"
+            pins: "pandas==2.2.3 numpy==2.1.3 pyarrow==23.0.1 shapely==2.1.2 PyYAML==6.0.3"
+          - name: oldest allowed
+            python: "3.11"
+            pins: "pandas==2.2.3 numpy==1.26.4 pyarrow==15.0.2 shapely==2.0.6"
+          - name: newest allowed
+            python: "3.13"
+            pins: ""
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scientific baseline (protected pipeline, settings and engine files unchanged)
+        # Fails if any file in docs/preflight/baseline_manifest.json changed. Never regenerate the
+        # manifest to make this pass: a real method change needs a reviewed new baseline.
+        run: python3 docs/preflight/verify_baseline.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r pipeline/requirements.txt ${{ matrix.pins }}
+      - name: Run tests
+        working-directory: pipeline
+        run: python -m pytest -q
+      - name: Audit statistics tests (validation/)
+        run: python -m pytest -q validation
+      - name: Recent detections fetch and snapshot tests (recent/, no network)
+        run: python -m pytest -q recent
+      - name: Weather context tests (context/, D39, no network)
+        run: python -m pytest -q context
+      - name: Map geography preparation tests (geo/, no network)
+        run: python -m pytest -q geo
+      - name: Baseline check tests (a changed protected file must fail)
+        run: python -m pytest -q docs/preflight

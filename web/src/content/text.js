@@ -1,0 +1,463 @@
+// EVERY LABEL AND SHORT SENTENCE ON THE SITE (safe to edit).
+// Change wording here, not in the components. Keep the meaning of science words the same:
+// "hotspots", "no data" (never "no fire"), "indicative", "95% range" are defined terms.
+// Entries written as functions build a sentence from numbers: keep the ${...} parts.
+
+// Shown beside every 95% range figure. Labels only: no calculation uses this.
+export const RANGE_CAVEAT = 'The range covers only the MODIS-to-VIIRS conversion error. Its 95% coverage was not checked independently, so it is a guide, not a guaranteed bound (see Method).';
+export const rangeShort = (p) => `95% range ±${p}% (conversion error only, not a guaranteed bound)`;
+
+// One way of writing dates and times on the site: "11 Nov 2026" and "11 Nov 2026, 23:50 UTC".
+// Display only. CSV files and the page address keep ISO dates (2026-11-11). Accepts "2026-11-11", "2026-11",
+// "2026-11-11T23:50Z", "2026-11-11T23:50:00Z" and "2026-11-11 23:50 UTC"; anything else is returned unchanged.
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export function fmtDate(s) {
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:[T ](\d{2}):(\d{2})(?::\d{2})?(?:Z| UTC)?)?$/.exec(String(s ?? '').trim());
+  if (!m) return s;
+  const [, y, mo, d, hh, mm] = m;
+  const day = d ? `${+d} ${SHORT_MONTHS[+mo - 1]} ${y}` : `${SHORT_MONTHS[+mo - 1]} ${y}`;
+  return hh ? `${day}, ${hh}:${mm} UTC` : day;
+}
+
+// The same style for a Date object (replaces toLocaleDateString, which wrote "Sept" while the rest of the site wrote "Sep").
+export const fmtDay = (d) => fmtDate(d.toISOString().slice(0, 10));
+
+const T = {
+  brand: 'Fire Atlas',
+  brandAction: 'Fire Atlas: home and refresh',
+  // The site footer identifies Fire Atlas, links to its source and methods, and carries the NASA disclaimer.
+  footer: {
+    credit: 'Fire Atlas · global fire activity explorer',
+    event: 'An independent project using NASA data; not created, approved or endorsed by NASA.',
+    linksLabel: 'About Fire Atlas',
+    github: 'Source code on GitHub',
+    newTab: '(opens in a new tab)',
+    method: 'Method and data',
+    credits: 'Data credits and references',
+  },
+  brandOffline: 'Could not reach the website to check for newer published data. Showing what is already loaded.',
+  brandNewer: (record, recent) => `Newer published data loaded: ${[record && 'the harmonised record', recent && 'the recent detections'].filter(Boolean).join(' and ')}.`,
+  tagline: 'One fire record from two generations of NASA satellites, from 2002 to the latest data',
+  dataTo: (d) => `Record to ${d}`,
+  recentTo: (t, stale) => `Recent detections to ${fmtDate(t)}${stale ? ' (not current)' : ''}`,
+  notOfficial: 'Independent fire data explorer · not an official NASA product',
+  skip: 'Skip to results',
+  aboutData: 'About this data',
+
+  views: { explore: 'Explore', switch: 'The 2012 switch', validation: 'Validation', method: 'Method and data' },
+  theme: { system: 'Auto', light: 'Light', dark: 'Dark', label: 'Colour theme' },
+
+  // ---------------------------------------------------------------- the two measures (D31)
+  measures: { cells: 'Hotspots', frp: 'Fire power' },
+  units: { cells: 'hotspots', frp: 'MW' },
+  // the unit written out beside totals and on chart axes: fire power totals are daily FRP sums added
+  // together, an index (see hotspotDefinition and the Method page), so they are never called energy
+  unitsLong: { cells: 'hotspots (cell-days)', frp: 'summed daily FRP (MW)' },
+  unitsNote: { cells: '', frp: 'Summed daily fire radiative power: an index of intense burning, not an amount of energy.' },
+  hotspotDefinition: 'A hotspot is a 0.05° grid cell (about 5 km) with fire on a day. Counting cells instead of raw '
+    + 'detections means the finer VIIRS pixels inflate the count much less. Fire power is the fire radiative power (MW) of the '
+    + 'detections, added up per day. Monthly and yearly fire power add those daily sums together, so they are an index of how '
+    + 'much intense burning was seen, not an amount of energy. Neither number counts separate fires.',
+  whatIsHotspot: 'What is a hotspot?',
+  // the hotspot card on Explore (14 Nov): the same definition as hotspotDefinition, in three short parts
+  hotspot: {
+    subClosed: 'What Fire Atlas counts, in three short parts',
+    subOpen: 'The measurement behind the numbers',
+    more: 'Learn more',
+    less: 'Show less',
+    parts: [
+      ['What is counted?', 'A 0.05° grid cell (about 5 km across) with at least one fire detection on a day counts once that day: one '
+        + 'hotspot cell-day, however many detections fall inside it. The hotspot numbers on this page add up those cell-days.'],
+      ['Why count cells, not detections?', 'VIIRS pixels are 375 m across and MODIS pixels about 1 km, so one fire can give VIIRS '
+        + 'several detections where MODIS gives one or two. Counting cells means the finer VIIRS pixels inflate the count much less. '
+        + 'It does not remove the difference completely: the harmonisation puts the older MODIS years on the VIIRS scale.'],
+      ['What is fire power?', 'The fire radiative power (MW) of the detections, added up per cell and day. Monthly and yearly fire power '
+        + 'add those daily sums together, so they are an index of how much intense burning was seen, not an amount of energy.'],
+    ],
+    limit: 'Neither number counts separate fires: one large fire covers many cells, and one cell can hold several small fires.',
+    diagram: 'Illustration, not real data. Each square is a grid cell, not a fire.',
+  },
+
+  // ---------------------------------------------------------------- choosing the area
+  area: {
+    heading: 'Area',
+    modes: { preset: 'Preset', country: 'Country', box: 'Coordinates', point: 'Point', draw: 'Draw' },
+    preset: 'Preset area',
+    country: 'Country',
+    countryPick: 'Choose a country…',
+    west: 'West', south: 'South', east: 'East', north: 'North',
+    lat: 'Latitude', lon: 'Longitude', radius: 'Radius (km)',
+    apply: 'Show',
+    drawHint: 'Press and drag on the map to draw a box.',
+    drawing: 'Drag on the map…',
+    draw: 'Draw a box on the map',
+    tooBig: (n, max) => `This area needs ${n} data files; the most one view can load is ${max}. Pick a smaller area.`,
+    edgeNote: 'Areas are summed on a 1° grid (about 100 km), so the edges of an area are approximate.',
+    tested: 'One of Fire Atlas\'s ten tested regions: its own checks are on the Validation page.',
+    share: 'Copy share link',
+    copied: 'Link copied',
+    modePick: 'How to choose the area',
+    notFound: (spec) => `Couldn't find the area "${spec}" in this link. Choose an area below.`,
+    choose: 'Choose an area…',
+    // the page opens on the world map with no area chosen: what the story side shows until one is picked
+    start: {
+      heading: 'Choose an area',
+      body: 'Search for a country, a preset or coordinates, or draw a shape on the map with the pen. Fire Atlas then shows how the latest '
+        + 'weeks compare with the same dates in earlier years, the usual fire season, the daily calendar and the monthly trend.',
+      example: (name, monthName, year) => `Example: ${name}, ${monthName} ${year}`,
+      mobile: 'Choose an area below the map to see its fire history.',
+    },
+  },
+
+  // ---------------------------------------------------------------- the search bar (UI lab, 14 Nov)
+  search: {
+    label: 'Search for a country, a preset or coordinates',
+    placeholder: 'Search a country, preset or coordinates…',
+    suggestions: 'Suggestions',
+    help: 'Coordinates in decimal degrees: "23.81, 90.41" (latitude, longitude), "23.81, 90.41, 100" (with a radius in km) or "88, 20.5, 92.7, 26.7" (west, south, east, north).',
+    kinds: { preset: 'Preset', point: 'Point', box: 'Box' },
+    pointItem: (lat, lon, km) => `${km} km around ${lat}, ${lon}`,
+    boxItem: (w, s, e, n) => `Box: west ${w}, south ${s}, east ${e}, north ${n}`,
+    none: (q) => `No country or preset matches "${q}". Try another spelling, coordinates, or "Choose instead".`,
+    draw: 'Draw a shape on the map',
+    drawStop: 'Stop drawing',
+    drawTools: 'Drawing a shape',
+    drawHint: (n) => (n === 0 ? 'Click or tap the map to place the first corner.' : `${n} corner${n === 1 ? '' : 's'}. Add at least ${3 - n} more.`),
+    drawReady: (n) => `${n} corners. Click the first corner, double-click or press Finish.`,
+    finish: 'Finish', undo: 'Undo corner', cancel: 'Cancel',
+    chooseInstead: 'Choose instead',
+    closeForm: 'Close',
+    shapeNote: 'The shape is summed on the 1° grid: a cell counts when its centre is inside, like a country.',
+  },
+
+  // ---------------------------------------------------------------- recent detections (D38)
+  recent: {
+    layer: 'Map layer',
+    layers: { record: 'Harmonised record', recent: 'Recent detections' },
+    period: 'Period',
+    // The periods end at the newest detection in the snapshot, not at the current time (Task 2, WP3).
+    periods: { '24h': '24 h to the newest detection', '7d': '7 days to the newest detection', all: 'Since 28 Oct' },
+    // When the data is not current, the callout below carries the retrieval time, so it is not repeated here.
+    fetched: (when, from, to, stale) => `${stale ? '' : `Retrieved from NASA FIRMS ${fmtDate(when)}. `}Detections from ${fmtDate(from)} to ${fmtDate(to)} (the newest one). `
+      + 'Periods end at the newest detection, not at the current time.',
+    stale: (when, ageHours) => `Recent observations are not current. Last updated ${fmtDate(when)}${
+      ageHours != null ? `, about ${ageHours < 48 ? `${ageHours} h` : `${Math.round(ageHours / 24)} days`} ago` : ''}. Showing the last successful dataset.`,
+    fallback: (when) => `The refresh of ${fmtDate(when)} did not complete, so this earlier dataset is kept unchanged.`,
+    feedLag: (h) => `The newest detection is ${h} hours older than the retrieval: FIRMS may be delayed.`,
+    missing: (list) => `Incomplete: no data was received for ${list}. Missing data is not "no fire".`,
+    missingItem: (m) => `${m.satellite === 'N21' ? 'NOAA-21' : m.satellite === 'N20' ? 'NOAA-20' : m.satellite} from ${fmtDate(m.from)} (${m.days} day${m.days === 1 ? '' : 's'})`,
+    unavailable: 'Recent detections are not available in this build (the last fetch failed or has not run). '
+      + 'The harmonised record is not affected.',
+    incomplete: 'Some recent data could not be fetched, so some days may be missing. Missing days are not "no fire".',
+    zoomHint: 'Zoom in to see single detections. Click a cell to zoom to it.',
+    tooMany: 'Showing the nearest areas only. Zoom in further to see every detection here.',
+    loading: 'Loading detections…',
+    loadingLayer: 'Loading recent detections…',
+    updating: 'Recent detections are being updated, and the files on the server do not all belong to the same update yet. '
+      + 'Nothing is shown rather than a mix. Reload in a few minutes. The harmonised record is not affected.',
+    tilesMissing: 'Some single detections in view could not be loaded (the data may be updating). Reload in a few minutes.',
+    cellTip: (n, fmax) => [`${n.toLocaleString()} detection${n === 1 ? '' : 's'}`, `strongest ${fmax.toLocaleString()} MW`, 'Click to zoom in'],
+    pointTip: (d) => [`${d.frp.toLocaleString()} MW`, `${d.satellite}, ${d.time}`, `confidence ${d.confidence}`,
+      ...(d.nonfire ? ['likely non-fire heat (gas flare, industry or volcano)'] : [])],
+    legendTitle: (zoomedIn) => (zoomedIn ? 'Recent detections: fire power of each detection' : 'Recent detections per 0.25° cell'),
+    legendUnitCells: 'detections of nominal or high confidence in the period',
+    legendUnitPoints: 'MW, as reported by FIRMS for each 375 m pixel',
+    legendRaw: 'Raw NASA FIRMS near-real-time detections. Not on the harmonised S-NPP scale and not added to any number '
+      + 'on this page. S-NPP, Fire Atlas\'s reference satellite, stopped in NASA FIRMS on 2 Nov 2026 (13:00 UTC), so these come from NOAA-20 and NOAA-21.',
+    legendLow: 'Faint ringed dots: low confidence. Grey: likely non-fire heat (Fire Atlas non-fire cells). Neither is counted in the overview.',
+    legendOverlap: '28 Oct is also the last day of the harmonised record (one day of overlap, on purpose).',
+    panel: {
+      title: 'This detection',
+      close: 'Close',
+      where: 'Pixel centre',
+      size: 'About 375 m across. A satellite pixel with a heat signal, not the outline of a fire.',
+      time: 'Time of the satellite pass',
+      satellite: 'Satellite',
+      untested: 'NOAA-21 has not been tested against S-NPP by Fire Atlas.',
+      tested: 'Fire Atlas measured NOAA-20 against S-NPP: 1.00 to 1.05 for hotspots.',
+      confidence: 'Confidence (FIRMS)',
+      frp: 'Fire radiative power (FIRMS)',
+      daynight: 'Day or night pass',
+      nonfire: 'Likely non-fire heat: this pixel is in a cell Fire Atlas marks as a persistent gas flare, industrial site or volcano.',
+      limits: 'Not every detection is a wildfire: farm, land-clearing and other burning count too. This is a raw detection, '
+        + 'not a harmonised value, and is never compared with the record as a number.',
+      history: 'Show the history of this area (50 km around)',
+      historyNote: 'The panel on the right then shows this area\'s burning calendar since 2002 and its usual fire season.',
+      firms: 'This place on the NASA FIRMS map',
+    },
+  },
+
+  // ---------------------------------------------------------------- the map
+  map: {
+    month: 'Map month (whole month)',
+    monthTo: (end) => `Map month (to ${end}, the newest data)`,
+    notFire: 'Show heat that isn\'t fire',
+    kinds: { industry: 'gas flares, industry', volcano: 'volcanoes', offshore: 'offshore' },
+    fireTip: (frp, cells) => `<b>${frp} MW</b> fire power<br>${cells} hotspots (S-NPP scale)`,
+    notFireTip: (kind, years) => `<b>${kind}</b><br>Labelled non-fire by NASA in ${years} year${years > 1 ? 's' : ''}. Left out of every year.`,
+    notFireKinds: { 1: 'Volcano', 2: 'Gas flare or industry', 3: 'Offshore platform' },
+    attribution: 'Fire data: NASA FIRMS (MODIS, VIIRS) · Borders and names: Natural Earth, geoBoundaries',
+    imageryAttribution: 'Imagery: NASA GIBS, part of NASA ESDIS',
+    label: 'World map of harmonised fire activity',
+
+    // ---- view controls (2D map, 3D globe, backdrop, playback)
+    view: 'Map view',
+    views: { '2d': '2D map', '3d': '3D globe' },
+    basemap: 'Backdrop',
+    basemaps: { standard: 'Plain', satellite: 'Satellite (Blue Marble)', daily: 'Satellite picture of one day' },
+    imageryDay: 'Picture date',
+    reset: 'Whole world',
+    focus: 'Focus on area',
+    done: 'Done',
+    settingsButton: (layer, view) => `Map settings: ${layer}, ${view}`,
+    // the compact Map View control (14 Nov): one button, the settings in a temporary panel
+    viewButton: 'Map view',
+    viewNow: (view, layer, backdrop) => `${view} · ${layer}${backdrop ? ` · ${backdrop}` : ''}`,
+    projection: 'Projection',
+    camera: 'Camera',
+    closeView: 'Close map view settings',
+    loading: 'Loading the map…',
+    gaps: 'Show satellite gaps',
+    play: 'Play months', pause: 'Pause', speed: 'Speed',
+    speeds: { 2000: 'Slow', 1000: 'Normal', 500: 'Fast' },
+    mapFailed: 'The map could not start on this device (it needs WebGL, for the 2D map and the 3D globe alike). '
+      + 'Every chart, number and download beside it still works.',
+    contextLost: 'The graphics card reset the map. It is being redrawn.',
+    imageryOffline: 'The satellite picture could not be loaded (it needs the internet). The fire data on top is unaffected.',
+    imageryTooEarly: 'Daily satellite pictures start on 24 Feb 2000.',
+    imageryNote: 'The picture is a backdrop only. It is not Fire Atlas data, not live, and its date can differ from the fire month.',
+    dateLine: 'Boxes cannot cross the date line (180°). Draw one box on each side instead.',
+    keys: 'Keys: arrows move, + and − zoom, Shift with arrows tilts and turns (3D).',
+
+    // ---- legend
+    legendToggle: 'Map key',
+    legendTitle: (v, ym) => `${v === 'frp' ? 'Fire power' : 'Hotspots'}, ${fmtDate(ym)}, per 0.25° cell (about 25 km)`,
+    legendUnit: { frp: 'MW summed over the days of the month (an index, not energy)', cells: 'hotspot cell-days in the month' },
+    legendScale: 'S-NPP (VIIRS) scale throughout. Before 20 Jan 2012: MODIS put on that scale (an estimate).',
+    legendSupport: 'Each square is a 0.25° grid cell, not a fire location. Zoomed out, cells are drawn as dots.',
+    legendGaps: 'Hatched zones: 30° zones with at least one day without satellite data this month (no data is not zero).',
+    summary: (ym, n, frp, cells, view) => `${view}, ${ym}: ${n.toLocaleString()} cells with fire, `
+      + `${cells.toLocaleString()} hotspots and ${frp.toLocaleString()} MW summed fire power.`,
+
+    // ---- the panel for one clicked cell
+    cell: {
+      title: 'This map cell',
+      close: 'Close',
+      where: 'Cell',
+      size: '0.25° × 0.25° (about 25 km across). A grid cell, not the place of a fire.',
+      month: 'Month',
+      cells: 'Hotspots (S-NPP scale)',
+      frp: 'Fire power (summed MW, an index)',
+      source: 'Source',
+      eras: {
+        terra_only: 'MODIS Terra only, put on the S-NPP scale. Jan-Jun 2002: not comparable with later years (D20).',
+        modis: 'MODIS (Terra and Aqua, Aqua alone from 2020) put on the S-NPP scale with a measured factor. An estimate, not a VIIRS observation.',
+        switch: 'Mixed month: MODIS put on the S-NPP scale up to 19 Jan 2012, S-NPP observed from 20 Jan 2012.',
+        viirs: 'VIIRS S-NPP observed (NOAA-20 fills days S-NPP missed).',
+      },
+      range: 'Calibrated 95% range of the factor (conversion error only)',
+      rangeValue: (c, f, fc) => `hotspots ±${c}%, fire power ±${f}% (2.5° factor cell ${fc}, this calendar month). `
+        + 'Wide ranges mean few fires to measure the factor with. Area totals have much narrower ranges. '
+        + RANGE_CAVEAT,
+      rangeNone: 'Not needed: the month is observed by S-NPP.',
+      rangeMissing: 'No range for this factor cell and month.',
+      cloud: 'Cloud',
+      cloudYes: (t) => `Flagged: tile ${t} was cloudier than 90% of years this month, so some fire may have been hidden.`,
+      cloudNo: (t) => `Not flagged (tile ${t}).`,
+      cloudUnknown: 'No cloud data for this month.',
+      zeroWithGaps: (n) => `Zero on the days with data. ${n} day${n > 1 ? 's' : ''} had no satellite data in this zone, so fire on those days is unknown, not zero.`,
+      zone: 'Satellite days (30° zone)',
+      zoneValue: (p, f, n) => `${p} primary, ${f} filled from a partner satellite, ${n} with no data.`,
+      limits: 'Hotspots are not always wildfires: farm and land-clearing fires count too (known volcanoes, gas flares and '
+        + 'industry are removed). Values are monthly sums for the whole cell.',
+      firms: 'Original detections in this cell on NASA FIRMS',
+    },
+  },
+
+  // ---------------------------------------------------------------- the explore story
+  loading: 'Loading the daily record…',
+  noFire: 'No fire was recorded in this area.',
+  loadError: 'The fire data could not be loaded. If you opened the file directly, serve the folder instead (see Method and data).',
+  lede: (u, c, b0, b1, gaps) => `${u} unusual and ${c} critical months since ${b0}, judged against this area's own ${b0} to ${b1} normal.`
+    + (gaps > 0 ? ` ${gaps} days had no satellite data and are shown as gaps, not as quiet days.` : ''),
+  // Areas with very little fire (components/quiet.js): the month classes are not summarised.
+  ledeQuiet: (normalYear, min, gaps) => `Too little fire here to class months reliably: a normal year has about ${Math.round(normalYear)} hotspots, and the classes need at least ${min}.`
+    + (gaps > 0 ? ` ${gaps} days had no satellite data and are shown as gaps, not as quiet days.` : ''),
+
+  headings: {
+    now: 'Now against the past',
+    season: 'When the fire season comes',
+    calendar: 'Every day since 2002',
+    months: 'Each month against its normal',
+    trend: 'Monthly totals',
+    downloads: 'Download and share',
+  },
+
+  // ---------------------------------------------------------------- compare (D32)
+  compare: {
+    modes: { month: 'Latest month so far', last30: 'Latest 30 days', custom: 'Your dates' },
+    customHint: 'Pick dates (up to one year) to compare them with the same dates in every other year.',
+    tooLong: 'Choose at most one year of dates to compare with other years.',
+    datesNote: 'These dates also set the CSV downloads below.',
+    window: (a, b) => `${a} to ${b}`,
+    vsMedian: (ratio) => ratio == null ? 'No normal to compare with'
+      : ratio >= 1.15 ? `${ratio.toFixed(1)}× the normal` : ratio <= 0.87 ? `${Math.round(ratio * 100)}% of the normal` : 'About normal',
+    rank: (r, n) => `Rank ${r} of ${n} years (1 = most fire)`,
+    median: (v, b0, b1, n) => `Normal for the same dates (median of ${n} years, ${b0} to ${b1}): ${v}`,
+    monthShare: (pct, month) => `So far this month (to the last day with data) has had ${pct}% of the fire a normal ${month} brings in the whole month.`,
+    left: (n) => `${n} year${n > 1 ? 's' : ''} left out because a satellite gap fell in these dates.`,
+    targetGaps: (n) => `${n} day${n > 1 ? 's' : ''} in these dates had no satellite data, so this year may be undercounted.`,
+    // the short line stays visible under the chart; the full caveat sits behind "About this data"
+    modisShort: 'Bars before 2012 are MODIS put on the VIIRS scale. The whisker is their calibrated 95% range (conversion error only, not a guaranteed bound).',
+    modisNote: 'Bars before 2012 are MODIS put on the VIIRS scale. The whisker is their calibrated 95% range. ' + RANGE_CAVEAT,
+    chartLabel: 'The same dates in every year',
+    clippedSvg: '▲ range continues above',
+    clipped: '▲ Some whiskers continue above the top of the chart. Point at or tap a bar to read its full range.',
+  },
+
+  // ---------------------------------------------------------------- phone summary above the map (same numbers as Now against the past)
+  summary: {
+    label: 'Summary of the selected area',
+    sameDates: 'against the same dates in past years',
+    rankOf: (n) => `of ${n} years (1 = most fire)`,
+    periods: (a, b, map) => `Compared: ${a} to ${b}. The map shows ${map}.`,
+    mapMonth: (name, y, end) => (end ? `${name} ${y} (to ${end})` : `${name} ${y} (the whole month)`),
+    mapRecent: 'recent detections (raw FIRMS, not harmonised)',
+  },
+
+  // ---------------------------------------------------------------- fullscreen map (14 Nov)
+  fullscreen: {
+    enter: (view) => (view === '3d' ? 'Enter fullscreen globe' : 'Enter fullscreen map'),
+    exit: (view) => (view === '3d' ? 'Exit fullscreen globe' : 'Exit fullscreen map'),
+    exitShort: 'Exit',
+    workspace: (view) => (view === '3d' ? 'Fullscreen globe' : 'Fullscreen map'),
+    windowNote: 'Filling the browser window (this browser does not allow full screen for part of a page).',
+    inspector: 'Research inspector',
+    inspectorShort: 'Inspector',
+    inspectorHint: 'Shows the harmonised values for the selected area and for any grid cell you choose on the map.',
+    noArea: 'No area selected. Search above, draw a shape, or choose a cell on the map.',
+    pickCell: 'Choose a grid cell on the map to see its harmonised values, source and range.',
+    pickRecent: 'Choose a detection on the map to see its satellite, time and fetch time.',
+    closeInspector: 'Close the research inspector',
+    back: 'Back to the full analysis',
+    aboutMap: 'About this map',
+  },
+
+  // ---------------------------------------------------------------- weather context (D39, NASA POWER)
+  // Context, never a cause: keep "notCause" visible wherever the weather is shown.
+  weather: {
+    title: 'Weather at the time',
+    presetsOnly: 'Weather at the time (NASA POWER) is shown for the preset areas.',
+    unavailable: 'The weather for this area could not be loaded.',
+    noData: (end) => `No complete weather data for these dates (weather data runs to ${end}).`,
+    minYearsForSentence: 10,
+    lead: (n, items) => `Of the ${n} years with weather data for these dates, this one had ${
+      items.length === 1 ? items[0] : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`}.`,
+    firsts: {
+      PRECTOTCORR: 'the least rain', RAIN_BEFORE: 'the least rain in the 60 days before', RH2M: 'the lowest humidity',
+      T2M_MAX: 'the highest daily maximum temperatures', WS2M: 'the strongest wind', GWETROOT: 'the driest soil',
+    },
+    cols: ['', 'These dates', 'Normal', 'Against normal', 'Rank'],
+    rows: {
+      PRECTOTCORR: 'Rain (total)', RAIN_BEFORE: 'Rain in the 60 days before', RH2M: 'Humidity (mean)',
+      T2M_MAX: 'Daily maximum temperature (mean)', WS2M: 'Wind at 2 m (mean)', GWETROOT: 'Root-zone soil wetness (mean, 0 to 1)',
+    },
+    value: (key, v) => {
+      if (key === 'PRECTOTCORR' || key === 'RAIN_BEFORE') return `${v >= 10 ? Math.round(v) : v.toFixed(1)} mm`;
+      if (key === 'RH2M') return `${v.toFixed(0)}%`;
+      if (key === 'T2M_MAX') return `${v.toFixed(1)} °C`;
+      if (key === 'WS2M') return `${v.toFixed(1)} m/s`;
+      return v.toFixed(2);
+    },
+    vsNormal: (key, r) => {
+      if (key === 'RH2M') return Math.abs(r.diff) < 0.5 ? 'About the same' : `${Math.abs(r.diff).toFixed(1)} points ${r.diff < 0 ? 'lower' : 'higher'}`;
+      if (key === 'T2M_MAX') return Math.abs(r.diff) < 0.1 ? 'About the same' : `${Math.abs(r.diff).toFixed(1)} °C ${r.diff < 0 ? 'cooler' : 'warmer'}`;
+      return r.ratio == null ? '–' : `${Math.round(r.ratio * 100)}% of normal`;
+    },
+    noNormal: 'Too few years',
+    rank: (key, r, n) => `${r} of ${n}`,
+    rankNote: 'Rank 1 = the least rain, the lowest humidity, the driest soil, the hottest or the windiest of the years compared.',
+    notCause: 'Context, not cause: this shows the weather while the fire above was recorded. It does not show why fires burned and it is not a fire forecast.',
+    provisional: 'Provisional: these dates include recent near-real-time weather, which NASA may still revise.',
+    source: (n, b0, b1, end, pts) => `NASA POWER daily data (MERRA-2 and GEOS-IT reanalysis on a 0.5° by 0.625° grid), UTC days, the mean of `
+      + `${pts === 9 ? 'nine land points spread' : `${pts} land points (of nine, points over water left out) spread`} across the area. `
+      + `Normal: median of ${n} years, ${b0} to ${b1}, this year left out. Weather data runs to ${end}.`,
+    normalShort: 'normal',
+    rankShort: 'rank',
+  },
+
+  // ---------------------------------------------------------------- season
+  season: {
+    marker: 'latest data',
+    none: 'Too little fire here to define a season.',
+    runs: (a, b, len) => `The fire season usually runs from ${a} to ${b} (${len} days hold 80% of a year's fire).`,
+    peak: (d) => `It usually peaks around ${d}.`,
+    core: (a, b) => `Half of a normal year's fire burns between ${a} and ${b}.`,
+    sharp: (pct) => `${pct}% of a year's fire falls in its busiest 90 days.`,
+    now: (d) => `On ${d}:`,
+    inSeason: 'Inside the usual season.',
+    outSeason: (n) => `Outside the usual season; it usually starts in about ${n} days.`,
+    next30: (pct) => `The next 30 days usually bring ${pct}% of a year's fire.`,
+    soFar: (ratio, d) => ratio == null ? '' : `Since the quiet point (${d}) this fire year has had ${ratio >= 1 ? `${ratio.toFixed(1)}×` : `${Math.round(ratio * 100)}% of`} the fire a normal year has had by now.`,
+    gaps: 'Some days of this fire year had no satellite data.',
+    basis: (b0, b1) => `Average year ${b0} to ${b1}, smoothed over a month. A guide to timing, not a forecast.`,
+    chartLabel: 'The average year, with the usual season shaded',
+  },
+
+  // ---------------------------------------------------------------- calendar and month grid
+  calendar: {
+    label: 'Daily fire calendar, one row per year',
+    noFire: 'no fire seen', more: 'more fire', noData: 'no data', viirs: 'VIIRS from 20 Jan 2012',
+    indicative: 'days before 2012: indicative',
+    tipNoData: 'No data: a satellite outage covered this area. Not the same as no fire.',
+    srcTerra: 'Terra only, not comparable', srcModis: 'MODIS put on the VIIRS scale', srcViirs: 'VIIRS (S-NPP)',
+    filled: ', partly filled from a partner satellite',
+    tipIndicative: 'Day-level values before 20 Jan 2012 are indicative; the months are tested (D30).',
+  },
+  classes: { low: 'Below normal', normal: 'Normal', unusual: 'Unusual', critical: 'Critical' },
+  monthGrid: {
+    label: 'Monthly anomaly classes, one row per year',
+    notClassed: 'not classed (days without data)', before2012: 'before 2012, lower confidence', cloudy: 'cloudier than 90% of years',
+    inProgress: (end) => `month in progress (record ends ${end}), not classed yet`,
+    terra: 'Terra only: not compared with later years',
+    incomplete: (n, end) => `Not classed: ${n ? `${n} day(s) without data` : `month in progress, the record ends ${end}`}`,
+    tooFew: 'Too few years to judge',
+    classed: (cls, month, z) => `${cls} for ${month} (z = ${z})`,
+    falseAlarm: (pct) => `MODIS years: about ${pct}% of such flags are not unusual in VIIRS (measured)`,
+    cloudTip: 'Cloudier than 90% of years here: some fire may have been hidden by cloud.',
+    cloudUntil: (ym) => `Cloud data reaches ${ym}; later months carry no cloud flag.`,
+    classMeaning: 'Unusual and Critical mean statistically extreme for this place and month, judged against its own normal. They are not fire danger ratings or emergency warnings.',
+    quietNote: 'Too little fire here: one or two hotspots can make a month look Unusual or Critical, so read these colours as noise, not as signals.',
+  },
+  trend: {
+    label: (m) => `Monthly ${m}, with the 95% range of the MODIS years (conversion error only, not a guaranteed bound)`,
+    total: 'monthly total', range: '95% range of the scaling (MODIS years, conversion error only)', viirs: 'VIIRS',
+    rangeTip: (a, b) => `95% range ${a} to ${b} (conversion error only)`,
+  },
+  explainShort: 'VIIRS (S-NPP) scale throughout. Before 20 January 2012: MODIS put on that scale with a measured factor. The shaded band is that factor\'s calibrated 95% range (conversion error only, not a guaranteed bound).',
+  explainScale: 'Values are on the VIIRS (S-NPP) scale throughout. Before 20 January 2012 they are MODIS observations '
+    + 'put on that scale with a factor measured for this place and month. The shaded band is that factor\'s calibrated 95% range. '
+    + RANGE_CAVEAT,
+
+  // ---------------------------------------------------------------- downloads
+  downloads: {
+    from: 'From', to: 'To',
+    whole: 'Whole record',
+    daily: 'Daily totals (CSV)',
+    monthly: 'Monthly table with classes (CSV)',
+    cells: 'Hotspots per 1° cell and day (CSV)',
+    cellsBusy: 'Preparing…',
+    cellsCut: (n) => `Only the first ${n.toLocaleString()} rows fit; choose fewer dates or a smaller area.`,
+    firms: 'Original detections on NASA FIRMS (online)',
+    print: 'Print or save a one-page brief',
+    png: 'PNG', svg: 'SVG',
+    pngOnly: 'PNG image (this chart is drawn as a picture, so there is no SVG version)',
+    note: 'Dates apply to the CSV files and to "Your dates" in "Now against the past". Raw satellite points are not stored here. The FIRMS link opens them. '
+      + 'The range_95_pct column is the conversion-error range only, not a guaranteed 95% bound (see Method).',
+  },
+};
+
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+export default T;

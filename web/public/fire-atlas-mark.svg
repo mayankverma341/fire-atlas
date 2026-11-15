@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Fire Atlas">
+  <rect width="64" height="64" rx="14" fill="#103B4A"/>
+  <path d="M14 16h36M14 32h36M14 48h36M16 14v36M32 14v36M48 14v36" fill="none" stroke="#A9C8CC" stroke-opacity=".55" stroke-width="1.4"/>
+  <path d="M32 11c-1 8-9 11-9 22 0 8 4 15 9 19 5-4 9-11 9-19 0-8-4-13-9-22Z" fill="#F7783A" stroke="#F8FBFC" stroke-width="2"/>
+  <path d="M32 25c-1 5-4 8-4 13 0 4 2 7 4 9 3-2 4-5 4-9 0-5-2-8-4-13Z" fill="#FFD596"/>
+</svg>

@@ -1,0 +1,22 @@
+// The site footer identifies Fire Atlas and links to the code, method, and data credits.
+// Plain text, no logos. It says the project is independent of NASA. On Explore it sits at the end of the
+// analysis column, so it never covers the map; on the other pages it follows the page.
+import T from '../content/text.js';
+import { REPO_URL } from '../content/links.js';
+
+export default function SiteFooter({ onNav }) {
+  const F = T.footer;
+  return (
+    <footer className="sitefooter">
+      <div className="sf-credit">
+        <p className="sf-brand">{F.credit}</p>
+        <p className="sf-event">{F.event}</p>
+      </div>
+      <ul className="sf-links" aria-label={F.linksLabel}>
+        <li><a href={REPO_URL} target="_blank" rel="noreferrer">{F.github}<span className="visually-hidden"> {F.newTab}</span></a></li>
+        <li><button type="button" className="sf-link" onClick={() => onNav('method', 'overview')}>{F.method}</button></li>
+        <li><button type="button" className="sf-link" onClick={() => onNav('method', 'sources')}>{F.credits}</button></li>
+      </ul>
+    </footer>
+  );
+}

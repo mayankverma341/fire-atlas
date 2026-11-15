@@ -1,0 +1,597 @@
+# Fire Atlas pipeline settings
+# Every tunable value lives here. Code reads this file; nothing is hard-coded.
+# When new source data arrives, only the `inputs` block should need to change.
+
+version: "0.0"
+
+# Which dataset to work on. Each dataset has its own raw and processed folders,
+# so the Florida sample and global data never mix.
+#   florida : FIRMS form downloads for the Florida sample box
+#   global  : FIRMS yearly world files (fetch stage) + recent-months form downloads
+# Override on the command line: python -m fire_atlas.run --dataset florida
+dataset: global
+
+inputs:
+  # Folder holding raw FIRMS CSV files (archive and/or NRT, MODIS and/or VIIRS).
+  # Any file matching these patterns is picked up. The adapter detects the sensor from the columns.
+  raw_dir: data/raw/{dataset}
+  # FIRMS .zip downloads can be dropped in as they are; CSVs inside are read directly.
+  patterns:
+    - "*.csv"
+    - "*.zip"
+  adapter: firms_csv          # name of the adapter in pipeline/fire_atlas/adapters/
+
+outputs:
+  processed_dir: data/processed/{dataset}
+  detections_subdir: detections   # Level 1: cleaned detections (contract L1)
+  celldays_subdir: celldays       # Level 2: gridded cell-days (contract L2)
+
+grid:
+  resolution_deg: 0.05            # D4 resolution
+
+regions:
+  # Optional boundary per dataset (GeoJSON). Detections outside it are dropped and
+  # counted as outside_region. Datasets not listed (global) are not clipped.
+  # Florida: use the state outline rather than the whole bounding box,
+  # which also covers parts of Georgia and Alabama (D16).
+  clip:
+    florida: config/regions/florida.geojson
+    sample: config/regions/florida.geojson   # 2-minute demo (python -m fire_atlas.quickstart)
+
+  # Phase 2 test regions (D18): one per contrasting fire regime, plus the cloudy and
+  # volcanic cases D11 asks for and South Asia for local Impact. Boxes are
+  # [west, south, east, north] in degrees. Calibration and validation are reported per
+  # region; the global record is not clipped to them.
+  test:
+    florida:         {bbox: [-87.6, 24.5, -80.0, 31.0],  regime: "subtropical prescribed burning"}
+    africa_savanna:  {bbox: [15.0, 4.0, 30.0, 12.0],     regime: "tropical savanna, world's largest burned area"}
+    australia_savanna: {bbox: [129.0, -17.0, 138.0, -11.0], regime: "southern-hemisphere savanna, late dry season fires"}
+    amazon_arc:      {bbox: [-64.0, -13.0, -52.0, -7.0], regime: "tropical deforestation and forest fire"}
+    siberia_boreal:  {bbox: [100.0, 55.0, 130.0, 65.0],  regime: "boreal forest, large summer wildfires"}
+    iberia_med:      {bbox: [-9.5, 36.0, 3.5, 44.0],     regime: "Mediterranean summer wildfire"}
+    punjab_crop:     {bbox: [73.0, 27.0, 80.0, 32.0],    regime: "crop-residue burning (South Asia)"}
+    bangladesh:      {bbox: [88.0, 20.5, 92.7, 26.7],    regime: "small fires under monsoon cloud (local case)"}
+    kalimantan_peat: {bbox: [109.0, -4.0, 118.0, 2.0],   regime: "cloudy tropics, peat fires"}
+    java_volcanic:   {bbox: [105.0, -9.0, 115.0, -6.0],  regime: "active volcanoes next to farmland"}
+
+filters:
+  # FIRMS `type` field: 0 = presumed vegetation fire, 1 = active volcano,
+  # 2 = other static land source (gas flares, industry), 3 = offshore.
+  # NRT files have no `type`; those rows are kept and flagged `type_known = false`.
+  keep_fire_types: [0]
+  keep_unknown_type: true
+  # Confidence classes kept (low / nominal / high). MODIS 0-100 is mapped to classes in the adapter.
+  keep_confidence: [nominal, high]
+  # Reject physically impossible values.
+  frp_min_mw: 0.0
+  frp_max_mw: 50000.0
+
+confidence_mapping:
+  # MODIS C6.1 numeric confidence -> class (MODIS C6.1 user guide convention)
+  modis_low_below: 30
+  modis_high_from: 80
+
+record:
+  # D20: Aqua data start in July 2002, and merged MODIS sees about 2.7x as
+  # many fire cells as Terra alone. So the comparable record and every "normal" baseline
+  # start on 1 Jan 2003; Jan-Jun 2002 is kept but flagged "Terra only, not comparable".
+  comparable_start: "2003-01-01"
+  terra_only_until: "2002-07-03"   # FIRMS Aqua fire data begin 4 Jul 2002
+
+periods:
+  modis_start: "2000-11-01"
+  viirs_start: "2012-01-20"
+  # Overlap years used to fit the MODIS -> VIIRS calibration
+  calibration_start: "2012-01-20"
+  calibration_end: "2021-12-31"
+  # Held-out years for validation (never used in fitting)
+  holdout_start: "2022-01-01"
+  holdout_end: "2025-12-31"
+
+calibration:
+  # Reference method (D11): ordinary least squares on coincident cell-days,
+  #   VIIRS_FRP = slope x MODIS_FRP + intercept
+  # MODIS Terra and Aqua are summed per cell-day; VIIRS uses S-NPP only (D8).
+  modis_satellites: [Terra, Aqua]
+  viirs_satellites: [S-NPP]
+  # Datasets for the paired cell-day calibration. Global calibration is done per region in
+  # Phase 2 (loading every global year at once would not fit in Colab memory).
+  run_on_datasets: [florida, test, sample]
+  # Drop days when any satellite in the model was not fully working (qc coverage table).
+  # Otherwise a Terra outage makes "MODIS" (Terra + Aqua) look weak against VIIRS.
+  exclude_gap_days: true
+  # Validation is reported at several scales. The calendar works at area-month
+  # scale, so that is the headline number; cell-day is reported for honesty.
+  validation_scales:
+    - {name: cell_day, time: day, space_deg: null}
+    - {name: cell_month, time: month, space_deg: null}
+    - {name: area025_month, time: month, space_deg: 0.25}
+    - {name: region_month, time: month, space_deg: all}
+
+counts:
+  # Phase 2 fix 1: detection-count harmonisation (stage `counts`). Active cell-days
+  # (0.05 deg cell with >= 1 detection) replace raw detections, then the MODIS record is
+  # scaled to VIIRS with a factor per test region and calendar month, fitted on the
+  # calibration years and tested on the holdout years.
+  # D19 (selection rule fixed before the run): Terra + Aqua merged per
+  # cell-day until 2019, Aqua alone from 2020 (Terra's orbit drifts from 2020). Each piece
+  # gets its own factor.
+  source_segments: [[MODIS, 2000, 2019], [Aqua, 2020, 2100]]
+  reference: S-NPP
+  min_cells_per_month: 30  # fewer MODIS active cells than this -> use the region's all-year factor
+  exclude_gap_days: true   # leave out days when any of these satellites was not fully working
+
+sources:
+  # Phase 2 fix 3 (stage `sources`, after `counts`): fit fix 1 from MODIS merged, Aqua alone
+  # and Terra alone, with the same left-out days, and compare holdout error, 2012 step and
+  # drift of the yearly S-NPP/source ratio (Terra's orbit drifts from 2020).
+  candidates: [MODIS, Aqua, Terra]
+  reference: S-NPP
+  min_cells_per_month: 30
+  exclude_gap_days: true
+
+selection:
+  # Phase 2 fix 3b (stage `selection`, after `counts`): six tests choose the MODIS
+  # calibration source (D19). Each candidate is a list of [group, first year, last year].
+  reference: S-NPP
+  candidates:
+    MODIS: [[MODIS, 2000, 2100]]                         # Terra + Aqua merged (fix 1)
+    Aqua: [[Aqua, 2000, 2100]]
+    Terra: [[Terra, 2000, 2100]]
+    MODIS_then_Aqua: [[MODIS, 2000, 2019], [Aqua, 2020, 2100]]   # drop Terra once its orbit drifts
+  overlap_years: [2012, 2025]          # full MODIS + S-NPP years (leave-one-year-out)
+  backward_fit_years: [2016, 2025]     # test 1: fit late, predict early (how the product is used)
+  backward_test_years: [2012, 2015]
+  forward_fit_years: [2012, 2021]      # the fix 1 split, for comparison
+  forward_test_years: [2022, 2025]
+  modis_first_year: 2002
+  terra_stable_until: 2019             # test 4: Aqua/Terra drift before and after
+  bootstrap_samples: 1000              # test 5
+  seed: 26
+  fire_size_split: true                # test 6: small-fire vs large-fire cells (about 5 extra minutes)
+  min_cells_per_month: 30
+  exclude_gap_days: true
+  # RULE FIXED BEFORE THE FIRST RUN (recorded in these settings; do not change after seeing results):
+  # score = mean category agreement % over the test regions (not global), averaged over the
+  # leave-one-year-out and backward tests. A candidate is out if its global backward error
+  # is beyond +-max_global_backward_error_pct. If several are within tie_margin_points of the
+  # best score, the one with the smallest global false trend (drift) wins.
+  rule:
+    max_global_backward_error_pct: 10
+    tie_margin_points: 2
+
+frp:
+  # Phase 2 fix 4 (stage `frp`, after `counts`): how to put MODIS fire power on the VIIRS
+  # scale. Compares the fixed reference line, a line with intercept per region, a line through
+  # zero, the paired-cell ratio and the ratio of all fire power (per region and month).
+  # Uses the D19 source pieces from `counts.source_segments`.
+  reference: S-NPP
+  reference_equation: [0.316162, 24.701681]   # VIIRS_FRP = a x MODIS_FRP + b (fixed reference line)
+  overlap_years: [2012, 2025]
+  backward_fit_years: [2016, 2025]
+  backward_test_years: [2012, 2015]
+  forward_fit_years: [2012, 2021]
+  forward_test_years: [2022, 2025]
+  min_frp_mw_per_month: 300            # thinner months use the region's all-year ratio
+  exclude_gap_days: true
+  # RULE FIXED BEFORE THE FIRST RUN (D21), same as D19:
+  # score = mean category agreement % over the test regions, leave-one-year-out and backward
+  # averaged; out if global backward error beyond +-10%; within 2 points -> smallest global
+  # false trend wins.
+  rule:
+    max_global_backward_error_pct: 10
+    tie_margin_points: 2
+
+worldwide:
+  # Stage `worldwide` (after `counts`): the D19 and D21 tests repeated on a grid of tiles
+  # covering the whole Earth, so the choices are not judged on ten boxes alone. Each tile
+  # gets its own factors. Tiles with too little fire are listed but not scored.
+  reference: S-NPP
+  tile_deg: 10
+  min_ref_cells_per_month: 50        # average S-NPP burning cells a month to be tested
+  overlap_years: [2012, 2025]
+  backward_fit_years: [2016, 2025]
+  backward_test_years: [2012, 2015]
+  exclude_gap_days: true
+  # RULE FIXED BEFORE THE FIRST RUN (recorded in these settings): a decision is CONFIRMED
+  # worldwide if the chosen option has the highest fire-weighted score over all tested tiles
+  # (score = mean of leave-one-year-out and backward category agreement), or is within
+  # confirm_margin_points of the best. Otherwise CHECK: the decision goes back to Fire Atlas contributors.
+  rule:
+    confirm_margin_points: 2
+    error_limit_pct: 10
+
+nonfire:
+  # D22 (rule fixed before the factors run): remove the static
+  # non-fire cells (static_mask) in EVERY year, not only from unlabelled data, so gas flares
+  # and industry are treated the same before and after NASA's 2018 labelling change.
+  mask_all_years: true
+  # D26 (fix 8, rule fixed before the run): in the 50 flare tiles chosen by stage
+  # places, also remove cells NASA labelled non-fire in a single year. Read from
+  # processed/global/places/place_choices.csv by stages factors and harmonise.
+  flare_tiles_extra_mask: true
+
+factors:
+  # Stage `factors` (D21): the ratio per place and calendar month for every
+  # 10-degree tile with fire, for burning cells and fire power, on the D19 source pieces,
+  # fitted on all overlap years (the Aqua piece on all of 2020-2025), with a bootstrap range.
+  reference: S-NPP
+  tile_deg: 10
+  zone_deg: 30                       # thin tiles fall back to / borrow from their 30-degree zone
+  min_ref_cells_per_month: 50        # tiles with less fire are given factors but not scored
+  min_cells_per_month: 30            # below this a month uses the fallback chain
+  min_frp_mw_per_month: 300
+  prior_cells: 30                    # strength of borrowing, in burning cells
+  prior_frp_mw: 300                  # strength of borrowing, in MW
+  overlap_years: [2012, 2025]
+  backward_fit_years: [2016, 2025]
+  backward_test_years: [2012, 2015]
+  bootstrap_samples: 200
+  seed: 26
+  exclude_gap_days: true
+  exclude_data_loss: true            # D25: zone-days stage nodata judged data loss are left out of every fit
+  watch_tiles: [N20E000, N20E010, N20E050, N60E050, N60E060, N60E070, N30W110, N20E030, N40E090]
+  # RULES FIXED BEFORE THE FIRST RUN (recorded in these settings). Judged on fire power,
+  # fire-weighted score over the tested tiles (mean of leave-one-year-out and backward
+  # category agreement), in this order:
+  #   1. non-fire mask in every year: kept if the score drops by no more than
+  #      mask_max_drop_points AND the share of tiles within +-error_limit_pct rises
+  #      (it is a data-consistency fix, so it may cost a little agreement)
+  #   2. fire-size split, 3. borrowing from the zone, 4. seasonal smoothing: each kept only if
+  #      it raises the score by more than refinement_gain_points over the current choice.
+  # Thin tiles always get factors through the fallback chain (tile month, tile all year,
+  # 30-degree zone, world), whatever is chosen.
+  rule:
+    mask_max_drop_points: 1
+    refinement_gain_points: 2
+    error_limit_pct: 10
+
+confidence:
+  # Phase 2 fix 5 (stages `confscan` then `confidence`): the confidence asymmetry. Fire Atlas drops
+  # "low" confidence for both sensors, but MODIS low (< 30 of 100) and VIIRS low (its own class)
+  # are different tests: about 4-5% of MODIS fire detections against about 11% of VIIRS.
+  # confscan keeps the low-confidence fire cell-days in their own folder; the main record
+  # is never changed by it.
+  low_subdir: celldays_low
+  # Variants scored, [MODIS from, VIIRS from]: main = as now (nominal + high),
+  # all = low-confidence detections added.
+  variants:
+    current: [main, main]
+    all: [all, all]
+    modis_all: [all, main]
+    viirs_all: [main, all]
+  # RULE FIXED BEFORE THE RUN (recorded in these settings). Same tiles, tests, D19 pieces
+  # and D22 mask as stage factors. Score = mean of the fire-weighted fire power score and the
+  # fire-weighted burning-cell score. A variant is eligible only if its global backward error
+  # is within +-error_limit_pct for both. The current filter stays unless an eligible variant
+  # scores more than gain_points higher AND has at least as many tiles within +-error_limit_pct
+  # for fire power. Among several such variants, the highest score wins.
+  rule:
+    gain_points: 2
+    error_limit_pct: 10
+
+nodata:
+  # Phase 2 fix 7 (stage `nodata`, after qc): "no data" must never look like "no fire".
+  # Finds whole-day gaps (qc coverage table) and regional gaps (a satellite far below its
+  # partner in one 30-degree zone), tests gap filling on simulated outages, and writes the
+  # record's availability per zone and day plus an expected error per zone and month.
+  tile_deg: 10
+  zone_deg: 30
+  regional:
+    # partner used on a day = first one in the list that was fully working that day
+    partners:
+      Terra: [Aqua]
+      Aqua: [Terra]
+      S-NPP: [NOAA-20, MODIS]
+      NOAA-20: [S-NPP]
+    window_days: 31          # the usual ratio = rolling median over this many days
+    min_partner_cells: 40    # judged only when the partner sees at least this many burning cells in the zone
+    min_expected_cells: 20   # ... and the satellite was expected to see at least this many (small numbers are noise)
+    # D25 (from the first global run): a shortfall is DATA LOSS only if near-total
+    # (under severe_fraction of expected) or in at least min_zones_same_day zones on one day.
+    # Moderate one-zone shortfalls are weather (two looks hours apart): kept in the file, not filled.
+    severe_fraction: 0.10
+    min_zones_same_day: 3
+    low_fraction: 0.25       # regional gap when the satellite sees under this share of the usual ratio
+  # Fill links tested: target <- substitute (D19 = the MODIS piece: merged to 2019, Aqua from 2020)
+  links:
+    - {target: S-NPP, substitute: NOAA-20, years: [2019, 2025]}
+    - {target: S-NPP, substitute: D19, years: [2012, 2025]}
+    - {target: MODIS, substitute: Aqua, years: [2003, 2019]}
+    - {target: MODIS, substitute: Terra, years: [2003, 2019]}
+  # The record's own satellite per period and the fill order when it is missing
+  record:
+    - {from: "2002-01-01", to: "2002-07-03", target: Terra, fill: []}
+    - {from: "2002-07-04", to: "2012-01-19", target: MODIS, fill: [Aqua, Terra]}
+    - {from: "2012-01-20", to: "2100-12-31", target: S-NPP, fill: [NOAA-20, D19]}
+  drop_last_days: 1        # the newest day of a form download is always cut off: count it as no data
+  gap_buckets: [[1, 3], [4, 7], [8, 14], [15, 27]]   # every gap length tested equally often
+  replicates: 3
+  seed: 7
+  # RULE FIXED BEFORE THE FIRST RUN (recorded in these settings). Simulated outages on days
+  # when target and substitute both worked, in the tested tiles of stage factors. Default for
+  # a gap is `scale` (month total x days in month / days with data). A fill method
+  # (substitute, or hybrid = substitute only where the tile has its own monthly factor) is
+  # adopted for a link only if its fire-weighted absolute error of month totals beats scale
+  # by more than gain_points for fire power, AND is not higher for burning cells, AND its
+  # global total error is within +-global_error_limit_pct for both. If both qualify, the lower
+  # fire power error wins (tie: hybrid, the more cautious). A zone-month whose expected error (from the same test, by gap
+  # length) exceeds month_error_limit_pct is withheld as "no data".
+  rule:
+    gain_points: 1
+    global_error_limit_pct: 5
+    month_error_limit_pct: 25
+    tile_limit_pct: 10
+
+places:
+  # Phase 2 fix 8 (stage `places`, after factors and confidence): per-place choices, each under a
+  # rule fixed BEFORE the first run. Same tested tiles, weights, D19 pieces,
+  # tests and fallback chain as stage factors.
+  # B. Stronger non-fire mask, applied only in FLARE TILES: tiles where the D22 cells hold at
+  #    least flare_share of the tile's MODIS burning cells (2012-2025). Steps in order: also
+  #    remove cells labelled non-fire in a single year; then also their 8 neighbouring cells.
+  #    Each kept (as D22 was) if the fire-weighted fire power score drops by no more than
+  #    mask_max_drop_points AND the share of tiles within +-error_limit_pct rises.
+  flare_share: 0.20
+  # A. MODIS source per tile (D19 or merged Terra + Aqua), NESTED so the choice cannot grade
+  #    itself: each tile picks on leave-one-year-out agreement over selection_years only;
+  #    every option is then judged on the backward test (fit 2016-2025, predict 2012-2015).
+  #    The per-tile choice replaces D19 everywhere only if its fire-weighted backward agreement
+  #    is more than source_gain_points higher AND its share of tiles within +-error_limit_pct
+  #    is not lower.
+  selection_years: [2016, 2025]
+  # C. Borrowed factors (own all-year, zone, world) are tested by rebuilding every tested
+  #    tile's factor WITHOUT the tile and predicting 2012-2015 from 2016-2019. No decision:
+  #    the measured errors set the fix 9 uncertainty for thin tiles.
+  # D. Confidence drift (fix 5): extra uncertainty per tile = |gap trend| x extrapolation_years
+  #    (middle of the 2012-2019 fit piece to the middle of 2002-2011).
+  extrapolation_years: 9
+  # E. Spotlight region (a key of regions.test): own backward test and a first calendar.
+  spotlight: bangladesh
+  rule:
+    mask_max_drop_points: 1
+    source_gain_points: 2
+    error_limit_pct: 10
+
+resolution:
+  # Phase 2 fix 9b (stage `resolution`, after factors): 10-degree tile factors vs 2.5-degree
+  # cell factors (own, or pulled towards their 10-degree tile), all judged on 2.5-degree cells
+  # with at least min_ref_cells_per_month S-NPP burning cells a month, same tests as factors.
+  fine_deg: 2.5
+  min_ref_cells_per_month: 10
+  # RULE FIXED BEFORE THE FIRST RUN (recorded in these settings): the best fine variant
+  # replaces the 10-degree factor only if (1) its score (mean of fire-weighted burning-cell and
+  # fire-power scores at fine scale) is higher by more than gain_points, (2) its mean absolute
+  # 2012-step gap over the D18 regions is lower, (3) its global backward error is within
+  # +-error_limit_pct for both variables. Stage harmonise then uses it automatically.
+  rule:
+    gain_points: 1
+    error_limit_pct: 10
+  # Must-fix 3: MODIS processing changes in 2018 (version 6.2 -> 6.03; qc measured -4.2%
+  # MODIS per S-NPP detection). The MODIS piece is fitted on 2012-2019, so two of its eight fit
+  # years are a different processing from the 2002-2011 years the factor is applied to.
+  # RULE FIXED BEFORE THE RUN: with the chosen variant, each same-version year is
+  # predicted leave-one-year-out from (a) the other same-version years and (b) the other years of
+  # the whole piece. (a) becomes the production fit only if its score (mean fire-weighted category
+  # agreement, burning cells and fire power) is higher by more than gain_points, OR if for both
+  # variables its pooled error on those years is closer to zero by more than error_gain_points
+  # while its score is at most max_score_drop_points lower.
+  version_test:
+    segment: MODIS
+    same_version_years: [2012, 2017]
+    rule: {gain_points: 1, error_gain_points: 0.5, max_score_drop_points: 1}
+  # Option E: test regions whose 2012 step gap (harmonised vs MODIS alone, burning cells,
+  # production fit years) stays outside +-step_limit_pct. RULE FIXED BEFORE THE RUN:
+  # another variant replaces the chosen one INSIDE THAT REGION only if it brings the gap inside the
+  # limit AND its backward error (2012-2015 from 2016-2019, both variables) is no larger in size
+  # AND its leave-one-year-out month error (both variables) is no larger; otherwise the region is
+  # flagged and its measured gap is added to the uncertainty of every factor inside it.
+  region_test:
+    step_limit_pct: 10
+    variants: [coarse, fine, fine_shrunk, fine_seasonal, fine_shrunk_seasonal, all_year]
+
+daily:
+  # Must-fix 6 and option F (stage `daily`, after resolution, before harmonise). Backward test day
+  # by day: final model fitted on fit_years of the MODIS piece, predicting test_years.
+  test_years: [2012, 2015]
+  fit_years: [2016, 2019]
+  # Nominal local solar overpass hours [day, night]. Terra drifts earlier and Aqua later after
+  # 2020, which moves the date boundary by about 15 degrees of longitude per hour of drift.
+  overpass_hours: {Terra: [10.5, 22.5], Aqua: [13.5, 1.5], S-NPP: [13.5, 1.5], NOAA-20: [13.5, 1.5]}
+  # RULES FIXED BEFORE THE RUN. LABELS: a time scale (day, week, month) counts as
+  # TESTED for the MODIS years if the fire-weighted median error of MODIS x k against S-NPP over the
+  # tested 2.5-degree cells is at most error_limit_pct for both variables; finer scales are shown
+  # as "indicative" before 20 Jan 2012. DAY BASIS: the local solar day replaces the UTC day only if
+  # the daily error falls by more than gain_points for both variables and the daily correlation
+  # falls for neither.
+  rule: {error_limit_pct: 25, gain_points: 1}
+
+external:
+  # Stage `external` (download): outside data for options B and C, reduced at once to small tables
+  # in processed/global/external/, downloaded files deleted. Earthdata Login comes from Colab
+  # Secrets EARTHDATA_USERNAME / EARTHDATA_PASSWORD (never typed anywhere).
+  cell_deg: 2.5
+  gfed:
+    # GFED4.0 monthly burned area WITHOUT small fires (MCD64A1-based), 0.25 deg, hectares,
+    # ORNL DAAC doi:10.3334/ORNLDAAC/1293 (files GFED4.0_MQ_YYYYMM_BA.hdf, 1995-2016)
+    short_name: fire_emissions_v4_R1_1293
+    years: [2003, 2016]
+  merra2:
+    # MERRA-2 monthly radiation diagnostics, total cloud area fraction (GES DISC)
+    short_name: M2TMNXRAD
+    version: "5.12.4"
+    variable: CLDTOT
+    years: [2003, 2026]
+
+phase2_checks:
+  # Stage `checks` (after harmonise). ALL RULES AND THE EVENT LIST FIXED BEFORE THE
+  # FIRST RUN and documented; see pipeline/fire_atlas/checks.py for what each part does.
+  baseline_years: [2003, 2025]          # the comparable record (D20), full years
+  final_test:
+    # untouched: no factor was fitted on 2026. Complete months only.
+    months: ["2026-01", "2026-09"]
+    error_limit_pct: 10                 # PASS if the global error is within +-10% for both variables
+    allow_rerun: false                  # the test is opened once; later runs show the stored result
+  coverage:
+    calibrate_years: [2016, 2019]       # month bands set on these years (leave-one-year-out) ...
+    verify_years: [2012, 2015]          # ... and verified here (backward)
+    fire_bins_cells: [30, 300]          # predicted S-NPP-scale burning cells a month: thin / medium / busy
+    accept: [90, 99]                    # verified coverage of a 95% band must land here
+  events:
+    # Known fire events: box [west, south, east, north] and the months they burned.
+    russia_2010:       {bbox: [35.0, 50.0, 55.0, 58.0],     months: ["2010-07", "2010-08"]}
+    greece_2007:       {bbox: [20.5, 36.3, 26.0, 41.0],     months: ["2007-08"]}
+    indonesia_2006:    {bbox: [95.0, -6.0, 119.0, 6.0],     months: ["2006-09", "2006-10"]}
+    indonesia_2015:    {bbox: [95.0, -6.0, 119.0, 6.0],     months: ["2015-09", "2015-10"]}
+    amazon_2019:       {bbox: [-74.0, -18.0, -44.0, 5.0],   months: ["2019-08"]}
+    australia_2019_20: {bbox: [140.0, -39.0, 154.0, -28.0], months: ["2019-12", "2020-01"]}
+    pantanal_2020:     {bbox: [-59.0, -22.0, -54.0, -15.0], months: ["2020-08", "2020-09", "2020-10"]}
+    canada_2023:       {bbox: [-141.0, 42.0, -52.0, 70.0],  months: ["2023-06"]}
+  critical:
+    # a day is critical when its 7-day fire power is at least z standard deviations (log scale)
+    # above the same days of year (+-doy_halfwidth) in the other baseline years; critical days at
+    # most max_gap_days apart form one run; a run needs min_days critical days. Days with more than
+    # half the area's zones without data are left out.
+    window_days: 7
+    z: 2
+    doy_halfwidth: 15
+    min_days: 3
+    max_gap_days: 2
+    # Added after the first checks run showed the daily Fire Atlas record with about twice
+    # MODIS alone's critical days before 2012 and about half after (the monthly record is
+    # balanced). RULE FIXED BEFORE THE RUN (recorded in these settings): three ways of building
+    # the daily normal are compared: pooled (one normal from all baseline years, as before),
+    # era_sd (pooled mean, spread from the same era's years only: MODIS x k and S-NPP have
+    # different day-to-day noise) and era_normal (mean and spread from the same era). Each is
+    # scored on the stable-MODIS window reference_years (Terra and Aqua both on station until
+    # 2019, D19): per area (D18 regions and the world), the ratio of critical days per year
+    # before / from 20 Jan 2012 (each + 0.5) for Fire Atlas against the same ratio for MODIS alone
+    # (one sensor, pooled normal); score = median over areas of |log(Fire Atlas ratio / MODIS ratio)|.
+    # The lowest score wins only if it beats pooled by more than min_gain and the known events
+    # found as dated runs do not fall; otherwise pooled stays.
+    era_variants: [pooled, era_sd, era_normal]
+    reference_years: [2003, 2019]
+    min_gain: 0.05
+  gfed:
+    # the record / burned-area ratio may step at 2012 (after / before) by no more than MODIS
+    # alone's ratio steps at any other year (same 3-year windows), for both variables.
+    before_years: [2009, 2011]
+    after_years: [2013, 2015]
+  cloud:
+    percentile: 90     # a cell-month is cloudy when its cloud fraction reaches its own 90th percentile
+    min_ratio: 1.5     # the flag is shown if low months are cloudy at least 1.5 x as often as all months
+
+export:
+  # Phase 3 (stage `export`, after harmonise): static files for the website (D5).
+  out_subdir: site_data
+  max_site_mb: 900
+
+harmonise:
+  # Phase 2 fix 9 (stage `harmonise`, after factors is rerun with D26 and D25): the harmonised
+  # record L3, one row per 0.25-degree cell and day with fire, on the S-NPP scale, with the
+  # source of every value, plus the 95% range of every factor.
+  resolution_deg: 0.25
+  out_subdir: l3
+  use_fine_factors: auto     # auto = use stage resolution's fine table when its rule adopted it
+  fill_method: auto          # auto = each link's method from stage nodata (D25): substitute, or hybrid
+  day_basis: auto            # auto = stage daily's rule (UTC unless the local solar day wins); utc; local
+  # D29: Aqua passed its 13:45 science limit in Feb 2023, so from this date the
+  # D19 MODIS fill (Aqua alone) is not used for S-NPP gaps; those zone-days are "no data".
+  # No rows of the published record come from that fill, so no rerun is needed.
+  d19_fill_off_from: "2023-02-01"
+  # GATE, fixed before the first run: the global 2012 step (mean 2013-2015 / mean
+  # 2009-2011) of the harmonised record is within +-step_tolerance_pct of the step MODIS alone
+  # shows, for burning cells and fire power.
+  gate:
+    step_tolerance_pct: 5
+    before_years: [2009, 2011]
+    after_years: [2013, 2015]
+  # RULE, fixed before the first run: on the overlap years of the MODIS piece,
+  # out-of-sample MODIS x k months are classed against the S-NPP climatology plainly and
+  # "era-fair" (spread widened by the measured month error of a factor, stage places part C).
+  # Era-fair is used by the calendar only if its false-alarm rate is at least fa_drop_points
+  # lower and it catches no more than caught_max_drop_points fewer real unusual months.
+  anomaly_rule:
+    fa_drop_points: 5
+    caught_max_drop_points: 5
+    sigma_fallback_log: 0.18
+
+continuity:
+  # Phase 2 fix 2 (stage `continuity`, after `counts`): S-NPP per NOAA-20 active cell and
+  # fire power, per test region and calendar month. NOAA-20 data start in 2018 (partial
+  # year), so the fit uses 2019-2023 and the test 2024-2025.
+  source: NOAA-20
+  reference: S-NPP
+  fit_years: [2019, 2023]
+  test_years: [2024, 2025]
+  min_cells_per_month: 30
+  exclude_gap_days: true
+
+fetch:
+  # FIRMS publishes one zip per sensor per year with every country's detections.
+  # The fetch stage downloads each year, turns it straight into cell-days and deletes
+  # the raw files, so Drive only holds the much smaller processed data.
+  base_url: https://firms.modaps.eosdis.nasa.gov/data/country/zips/
+  # File name = <prefix>_<year>_all_countries.zip. If a prefix fails, the next is tried.
+  products:
+    MODIS:
+      prefixes: [modis]
+      first_year: 2002
+    VIIRS:
+      prefixes: [viirs-snpp, viirs_snpp, suomi-viirs]
+      first_year: 2012
+    # VIIRS on NOAA-20 (JPSS-1), launched Nov 2017 (D8). After NASA stopped delivering
+    # Suomi NPP data, NOAA-20 became the VIIRS source that carries the record forward.
+    # Same sensor family as S-NPP, so it shares the VIIRS partitions; file_tag gives it its
+    # own file in each partition so the two satellites never overwrite each other.
+    VIIRS_NOAA20:
+      family: VIIRS
+      satellites: [NOAA-20]
+      file_tag: noaa20
+      prefixes: [viirs-jpss1, viirs_jpss1, viirs-noaa20, viirs_noaa20, noaa-20]
+      first_year: 2018
+      scan: false       # the static-source mask stays built from the MODIS and S-NPP files
+  # Last full year taken from the yearly files. Anything later comes from FIRMS form
+  # downloads placed in data/raw/global/ (one request covering 1 Jan to today).
+  last_year: 2025
+  # Local scratch folder for downloads (null = system temp). On Colab use local disk, not Drive.
+  tmp_dir: null
+
+static_mask:
+  # Grid cells FIRMS labelled as non-fire heat sources (volcano, gas flare/industry,
+  # offshore) in the yearly archive files, recorded by the scan stage. Detections WITHOUT
+  # a type field (near-real-time files) that fall in these cells are dropped as
+  # static_source_masked. Detections with a type field are filtered by type as usual.
+  enabled: true
+  sources_dir: data/processed/global/static_sources
+  path: data/processed/global/static_sources/static_cells.parquet
+  min_years: 2        # a cell must be labelled in at least this many years
+
+qc:
+  # Data health check (qc stage). A satellite-day is "none" when that satellite has no
+  # detections at all inside its operating period, "low" when its count is below
+  # low_fraction x the median of the surrounding window_days.
+  window_days: 31
+  low_fraction: 0.25
+  # Before/after comparisons for MODIS processing changes found by the scan stage:
+  # version label 6.2 (2002-2017) -> 6.03 (2018-2022) -> 61.03 (2023 onwards). The 2018
+  # change also brought about 14x more cells labelled as non-fire sources.
+  step_checks:
+    - {family: MODIS, at: "2018-01-01", years_each_side: 3}
+    - {family: MODIS, at: "2023-01-01", years_each_side: 3}
+
+coverage:
+  # Daily satellite coverage from the qc stage (global record), shared by every dataset.
+  path: data/processed/global/qc/daily_coverage.parquet
+
+checks:
+  # Cross-check: the Florida form download vs the Florida part of the global yearly files.
+  crosscheck:
+    reference_dataset: florida
+    region: config/regions/florida.geojson
+    inset_deg: 0.05     # only cells at least this far inside the boundary are compared
+    years: [2012, 2025]
+
+processing:
+  # Rows read per chunk. Lower this on Colab if memory runs out.
+  chunk_rows: 1000000
